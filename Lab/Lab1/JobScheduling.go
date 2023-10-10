@@ -12,12 +12,11 @@ type Job struct {
 	StartTime              int
 	EndTime                int
 	TurnaroundTime         int
-	WeightedTurnaroundTime int
+	WeightedTurnaroundTime float64
 }
-
-type Time struct {
-	Hour   int
-	Minute int
+type ResponseRatio struct {
+	JobNumber int
+	Ratio     float64
 }
 
 func TimeAdd(initialTime int, addedTime int) int {
@@ -28,19 +27,27 @@ func TimeAdd(initialTime int, addedTime int) int {
 	return 100*new_hour + new_minute
 }
 
+func TimeSub(subbedTime int, initialTime int) int {
+	ori_hour := initialTime / 100
+	ori_minute := initialTime % 100
+	subbed_hour := subbedTime / 100
+	subbed_minute := subbedTime % 100
+	return subbed_hour*60 + subbed_minute - ori_hour*60 - ori_minute
+}
+
 func PrintTitle() {
 	fmt.Println("作业\t\t进入时间\t估计运行时间\t开始时间\t结束时间\t周转时间(分钟)\t带权周转时间\t")
 }
 
 func PrintJob(jobs []Job) {
-	for i, m := range jobs {
-		fmt.Printf("JOB%d\t", i+1)
+	for _, m := range jobs {
+		fmt.Printf("JOB%d\t", m.JobNumber)
 		PrintTime(m.ArrivalTime)
 		fmt.Printf("\t    %d \t ", m.EstimatedTime)
 		PrintTime(m.StartTime)
 		PrintTime(m.EndTime)
 		fmt.Printf("\t\t%d\t", m.TurnaroundTime)
-		fmt.Printf("\t%d\t", m.WeightedTurnaroundTime)
+		fmt.Printf("\t%.2f\t", m.WeightedTurnaroundTime)
 		fmt.Printf("\n")
 	}
 }
@@ -70,53 +77,163 @@ func main() {
 	}
 
 	// 使用FIFO算法进行作业调度
-	fmt.Println("FIFO 调度算法：")
+	fmt.Println("--------------------------------------------------先进先出(FIFO)调度算法--------------------------------------------------")
 	PrintTitle()
 	scheduleFIFO(jobs)
-	//
-	//// 使用短作业优先（SJF）算法进行作业调度
-	//fmt.Println("\n短作业优先（SJF）调度算法：")
-	//sjfJobs := scheduleSJF(jobs)
-	//printJobSequence(sjfJobs)
-	//
-	//// 使用最高响应比优先（HRRN）算法进行作业调度
-	//fmt.Println("\n最高响应比优先（HRRN）调度算法：")
-	//hrrnJobs := scheduleHRRN(jobs)
-	//printJobSequence(hrrnJobs)
+
+	// 使用短作业优先（SJF）算法进行作业调度
+	fmt.Println("\n-------------------------------------------------短作业优先(SJF)调度算法-------------------------------------------------")
+	PrintTitle()
+	SJFJobs := scheduleSJF(jobs)
+
+	// 使用最高响应比优先（HRRN）算法进行作业调度
+	fmt.Println("\n-----------------------------------------------最高响应比优先(HRRN)调度算法-----------------------------------------------")
+	PrintTitle()
+	scheduleHRRN(SJFJobs)
+
 }
 
 func scheduleFIFO(jobs []Job) {
-	for i, m := range jobs {
+	copiedJobs := make([]Job, len(jobs))
+	copy(copiedJobs, jobs)
+	for i, _ := range copiedJobs {
 		if i == 0 {
-			m.StartTime = m.ArrivalTime
-
+			copiedJobs[i].StartTime = copiedJobs[i].ArrivalTime
+		} else {
+			copiedJobs[i].StartTime = copiedJobs[i-1].EndTime
 		}
-		m.EndTime = TimeAdd(m.StartTime, m.EstimatedTime)
+		copiedJobs[i].EndTime = TimeAdd(copiedJobs[i].StartTime, copiedJobs[i].EstimatedTime)
+		copiedJobs[i].TurnaroundTime = TimeSub(copiedJobs[i].EndTime, copiedJobs[i].ArrivalTime)
+		copiedJobs[i].WeightedTurnaroundTime = float64(copiedJobs[i].TurnaroundTime) / float64(copiedJobs[i].EstimatedTime)
 	}
-	PrintJob(jobs)
+	PrintJob(copiedJobs)
 }
 
 func scheduleSJF(jobs []Job) []Job {
-	// 对作业按照估计执行时间排序
-	sort.Slice(jobs, func(i, j int) bool {
-		return jobs[i].EstimatedTime < jobs[j].EstimatedTime
-	})
-	return jobs
-}
-
-func scheduleHRRN(jobs []Job) []Job {
-	// 对作业按照响应比排序
-	sort.Slice(jobs, func(i, j int) bool {
-		ratio1 := float64(jobs[i].EstimatedTime) / float64(jobs[i].ArrivalTime)
-		ratio2 := float64(jobs[j].EstimatedTime) / float64(jobs[j].ArrivalTime)
-		return ratio1 > ratio2
-	})
-	return jobs
-}
-
-func printJobSequence(jobs []Job) {
-	fmt.Println("作业序列：")
-	for _, job := range jobs {
-		fmt.Printf("作业%d 进入内存的时间：%d\n", job.JobNumber, job.ArrivalTime)
+	// 第一个作业先执行
+	jobs[0].StartTime = jobs[0].ArrivalTime
+	jobs[0].EndTime = TimeAdd(jobs[0].ArrivalTime, jobs[0].EstimatedTime)
+	jobs[0].TurnaroundTime = jobs[0].EstimatedTime
+	jobs[0].WeightedTurnaroundTime = 1
+	copiedJobs := make([]Job, len(jobs))
+	copy(copiedJobs, jobs)
+	currentTime := jobs[0].EndTime
+	scheduledJobs := []Job{}
+	for len(copiedJobs) > 0 {
+		availableJobs := []Job{}
+		// 已经到达的
+		for _, job := range copiedJobs {
+			if job.ArrivalTime <= currentTime {
+				availableJobs = append(availableJobs, job)
+			}
+		}
+		if len(availableJobs) == 0 {
+			// 如果没有可用作业，则将当前时间递增到下一个作业的到达时间
+			currentTime = copiedJobs[0].ArrivalTime
+			continue
+		}
+		sort.Slice(availableJobs, func(i, j int) bool {
+			return availableJobs[i].EstimatedTime < availableJobs[j].EstimatedTime
+		})
+		// 调度估计运行时间最短的作业
+		shortestJob := availableJobs[0]
+		scheduledJobs = append(scheduledJobs, shortestJob)
+		// 更新当前时间并从列表中移除已调度的作业
+		currentTime = TimeAdd(currentTime, shortestJob.EstimatedTime)
+		for i, job := range copiedJobs {
+			if job.JobNumber == shortestJob.JobNumber {
+				copiedJobs = append(copiedJobs[:i], copiedJobs[i+1:]...)
+				break
+			}
+		}
 	}
+
+	for i, _ := range scheduledJobs {
+		if scheduledJobs[i].JobNumber != 1 {
+			if i == 0 {
+				scheduledJobs[i].StartTime = jobs[0].EndTime
+			} else {
+				if scheduledJobs[i-1].JobNumber == 1 {
+					scheduledJobs[i].StartTime = scheduledJobs[i-2].EndTime
+				} else {
+					scheduledJobs[i].StartTime = scheduledJobs[i-1].EndTime
+				}
+			}
+			scheduledJobs[i].EndTime = TimeAdd(scheduledJobs[i].StartTime, scheduledJobs[i].EstimatedTime)
+			scheduledJobs[i].TurnaroundTime = TimeSub(scheduledJobs[i].EndTime, scheduledJobs[i].ArrivalTime)
+			scheduledJobs[i].WeightedTurnaroundTime = float64(scheduledJobs[i].TurnaroundTime) / float64(scheduledJobs[i].EstimatedTime)
+		}
+	}
+	sort.Slice(scheduledJobs, func(i, j int) bool {
+		return scheduledJobs[i].JobNumber < scheduledJobs[j].JobNumber
+	})
+	PrintJob(scheduledJobs)
+	return scheduledJobs
+}
+
+func scheduleHRRN(jobs []Job) {
+	jobs[0].StartTime = jobs[0].ArrivalTime
+	jobs[0].EndTime = TimeAdd(jobs[0].ArrivalTime, jobs[0].EstimatedTime)
+	jobs[0].TurnaroundTime = jobs[0].EstimatedTime
+	jobs[0].WeightedTurnaroundTime = 1
+	copiedJobs := make([]Job, len(jobs))
+	copy(copiedJobs, jobs)
+	currentTime := jobs[0].EndTime
+	scheduledJobs := []Job{}
+	for len(copiedJobs) > 0 {
+		availableJobs := []Job{}
+		// 已经到达的
+		for _, job := range copiedJobs {
+			if job.ArrivalTime <= currentTime {
+				availableJobs = append(availableJobs, job)
+			}
+		}
+
+		if len(availableJobs) == 0 {
+			// 如果没有可用作业，则将当前时间递增到下一个作业的到达时间
+			currentTime = copiedJobs[0].ArrivalTime
+			continue
+		}
+
+		sort.Slice(availableJobs, func(i, j int) bool {
+			return (1 + float64((availableJobs[i].TurnaroundTime-availableJobs[i].EstimatedTime)/availableJobs[i].EstimatedTime)) > (1 + float64((availableJobs[j].TurnaroundTime-availableJobs[j].EstimatedTime)/availableJobs[j].EstimatedTime))
+		})
+
+		// 调度响应比高的
+		shortestJob := availableJobs[0]
+		//fmt.Println(shortestJob)
+		scheduledJobs = append(scheduledJobs, shortestJob)
+		// 更新当前时间并从列表中移除已调度的作业
+		currentTime = TimeAdd(currentTime, shortestJob.EstimatedTime)
+
+		for i, job := range copiedJobs {
+			if job.JobNumber == shortestJob.JobNumber {
+				copiedJobs = append(copiedJobs[:i], copiedJobs[i+1:]...)
+				break
+			}
+		}
+
+	}
+	for i, _ := range scheduledJobs {
+		if scheduledJobs[i].JobNumber != 1 {
+			if i == 0 {
+				scheduledJobs[i].StartTime = jobs[0].EndTime
+			} else {
+				if scheduledJobs[i-1].JobNumber == 1 {
+					scheduledJobs[i].StartTime = scheduledJobs[i-2].EndTime
+				} else {
+					scheduledJobs[i].StartTime = scheduledJobs[i-1].EndTime
+				}
+			}
+			scheduledJobs[i].EndTime = TimeAdd(scheduledJobs[i].StartTime, scheduledJobs[i].EstimatedTime)
+			scheduledJobs[i].TurnaroundTime = TimeSub(scheduledJobs[i].EndTime, scheduledJobs[i].ArrivalTime)
+			scheduledJobs[i].WeightedTurnaroundTime = float64(scheduledJobs[i].TurnaroundTime) / float64(scheduledJobs[i].EstimatedTime)
+		}
+	}
+	//PrintJob(scheduledJobs)
+	sort.Slice(scheduledJobs, func(i, j int) bool {
+		return scheduledJobs[i].JobNumber < scheduledJobs[j].JobNumber
+	})
+	PrintJob(scheduledJobs)
+	return
 }
